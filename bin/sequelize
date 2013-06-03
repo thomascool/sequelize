@@ -67,7 +67,9 @@ var readConfig = function() {
     if (config.dialect == 'sqlite') {
       config.storage = (config.database.length > 0) ? '.' + urlParts.pathname + '.sqlite' : ':memory:';
     }
-    return config;
+    if (['postgres','mysql','sqlite'].indexOf(config.dialect) == -1) {
+      throw new Error('Invalid database dialect : '+ config.dialect)
+    } else return config;
 
   } else {
     try {
