@@ -1,7 +1,8 @@
 var fs        = require('fs')
+  , path      = require('path')
   , Sequelize = require(__dirname + "/../index")
   , DataTypes = require(__dirname + "/../lib/data-types")
-  , config    = require(__dirname + "/config/config")
+  , Config    = require(__dirname + "/config/config")
 
 var Support = {
   Sequelize: Sequelize,
@@ -24,42 +25,54 @@ var Support = {
     })
   },
 
+  prepareTransactionTest: function(sequelize, callback) {
+    var dialect = Support.getTestDialect()
+
+    if (dialect === 'sqlite') {
+      var options    = Sequelize.Utils._.extend({}, sequelize.options, { storage: path.join(__dirname, 'tmp', 'db.sqlite') })
+        , _sequelize = new Sequelize(sequelize.config.datase, null, null, options)
+
+      _sequelize.sync({ force: true }).success(function() { callback(_sequelize) })
+    } else {
+      callback(sequelize)
+    }
+  },
+
   createSequelizeInstance: function(options) {
     options = options || {}
-
     options.dialect = options.dialect || 'mysql'
+
+    var config = Config[options.dialect]
+
     options.logging = (options.hasOwnProperty('logging') ? options.logging : false)
-    options.pool    = options.pool || config.pool
+    options.pool    = options.pool !== undefined ? options.pool : config.pool
 
     var sequelizeOptions = {
-      logging: options.logging,
-      dialect: options.dialect,
-      port:    options.port || process.env.SEQ_PORT || config[options.dialect].port,
-      pool:    options.pool
-    }
-
-    if (!!options.host) {
-      sequelizeOptions.host = options.host
+      host:           options.host || config.host,
+      logging:        options.logging,
+      dialect:        options.dialect,
+      port:           options.port || process.env.SEQ_PORT || config.port,
+      pool:           options.pool,
+      dialectOptions: options.dialectOptions || {}
     }
 
     if (!!options.define) {
       sequelizeOptions.define = options.define
     }
 
+    if (!!config.storage) {
+      sequelizeOptions.storage = config.storage
+    }
+
     if (process.env.DIALECT === 'postgres-native') {
       sequelizeOptions.native = true
     }
 
-    return this.getSequelizeInstance(
-      process.env.SEQ_DB || config[options.dialect].database,
-      process.env.SEQ_USER  || process.env.SEQ_USERNAME || config[options.dialect].username,
-      process.env.SEQ_PW    || process.env.SEQ_PASSWORD || config[options.dialect].password,
-      sequelizeOptions
-    )
+    return this.getSequelizeInstance(config.database, config.username, config.password, sequelizeOptions)
   },
 
   getSequelizeInstance: function(db, user, pass, options) {
-    options = options || {};
+    options = options || {}
     options.dialect = options.dialect || this.getTestDialect()
     return new Sequelize(db, user, pass, options)
   },
@@ -103,6 +116,19 @@ var Support = {
     return envDialect
   },
 
+  dialectIsMySQL: function(strict) {
+    var envDialect = process.env.DIALECT || 'mysql'
+    if (strict === undefined) {
+      strict = false
+    }
+
+    if (strict) {
+      return envDialect === 'mysql'
+    } else {
+      return ['mysql', 'mariadb'].indexOf(envDialect) !== -1
+    }
+  },
+
   getTestDialectTeaser: function(moduleName) {
     var dialect = this.getTestDialect()
 
@@ -111,13 +137,39 @@ var Support = {
     }
 
     return "[" + dialect.toUpperCase() + "] " + moduleName
+  },
+
+  getTestUrl: function(config) {
+    var url,
+        dbConfig = config[config.dialect];
+
+    if (config.dialect === 'sqlite') {
+      url = 'sqlite://' + dbConfig.storage;
+    } else {
+      url = config.dialect + "://" + dbConfig.username
+      + "@" + dbConfig.host + ":" + dbConfig.port + "/" + dbConfig.database;
+    }
+    return url;
   }
 }
 
 var sequelize = Support.createSequelizeInstance({ dialect: Support.getTestDialect() })
 
+// For Postgres' HSTORE functionality and to properly execute it's commands we'll need this...
+before(function(done) {
+  var dialect = Support.getTestDialect()
+  if (dialect !== "postgres" && dialect !== "postgres-native") {
+    return done()
+  }
+
+  sequelize.query('CREATE EXTENSION IF NOT EXISTS hstore', null, {raw: true}).success(function() {
+    done()
+  })
+})
+
 beforeEach(function(done) {
   this.sequelize = sequelize
+
   Support.clearDatabase(this.sequelize, function() {
     done()
   })

@@ -1,4 +1,4 @@
-/* jshint camelcase: false */
+/* jshint camelcase: false, expr: true */
 var chai      = require('chai')
   , expect    = chai.expect
   , Support   = require(__dirname + '/../support')
@@ -7,7 +7,51 @@ var chai      = require('chai')
 chai.Assertion.includeStack = true
 
 describe(Support.getTestDialectTeaser("HasOne"), function() {
+  describe("Model.associations", function () {
+    it("should store all assocations when associting to the same table multiple times", function () {
+      var User = this.sequelize.define('User', {})
+        , Group = this.sequelize.define('Group', {})
+
+      Group.hasOne(User)
+      Group.hasOne(User, { foreignKey: 'primaryGroupId', as: 'primaryUsers' })
+      Group.hasOne(User, { foreignKey: 'secondaryGroupId', as: 'secondaryUsers' })
+
+      expect(Object.keys(Group.associations)).to.deep.equal(['User', 'primaryUsers', 'secondaryUsers'])
+    })
+  })
+
   describe('getAssocation', function() {
+    it('supports transactions', function(done) {
+      Support.prepareTransactionTest(this.sequelize, function(sequelize) {
+        var User  = sequelize.define('User', { username: Support.Sequelize.STRING })
+          , Group = sequelize.define('Group', { name: Support.Sequelize.STRING })
+
+        Group.hasOne(User)
+
+        sequelize.sync({ force: true }).success(function() {
+          User.create({ username: 'foo' }).success(function(user) {
+            Group.create({ name: 'bar' }).success(function(group) {
+              sequelize.transaction(function(t) {
+                group.setUser(user, { transaction: t }).success(function() {
+                  Group.all().success(function(groups) {
+                    groups[0].getUser().success(function(associatedUser) {
+                      expect(associatedUser).to.be.null
+                      Group.all({ transaction: t }).success(function(groups) {
+                        groups[0].getUser({ transaction: t }).success(function(associatedUser) {
+                          expect(associatedUser).to.be.not.null
+                          t.rollback().success(function() { done() })
+                        })
+                      })
+                    })
+                  })
+                })
+              })
+            })
+          })
+        })
+      })
+    })
+
     it('should be able to handle a where object that\'s a first class citizen.', function(done) {
       var User = this.sequelize.define('UserXYZ', { username: Sequelize.STRING })
         , Task = this.sequelize.define('TaskXYZ', { title: Sequelize.STRING, status: Sequelize.STRING })
@@ -19,7 +63,7 @@ describe(Support.getTestDialectTeaser("HasOne"), function() {
             Task.create({ title: 'task', status: 'inactive' }).success(function(task) {
               user.setTaskXYZ(task).success(function() {
                 user.getTaskXYZ({where: ['status = ?', 'active']}).success(function(task) {
-                  expect(task).to.equal(null)
+                  expect(task).to.be.null
                   done()
                 })
               })
@@ -31,9 +75,36 @@ describe(Support.getTestDialectTeaser("HasOne"), function() {
   })
 
   describe('setAssociation', function() {
+    it('supports transactions', function(done) {
+      Support.prepareTransactionTest(this.sequelize, function(sequelize) {
+        var User  = sequelize.define('User', { username: Support.Sequelize.STRING })
+          , Group = sequelize.define('Group', { name: Support.Sequelize.STRING })
+
+        Group.hasOne(User)
+
+        sequelize.sync({ force: true }).success(function() {
+          User.create({ username: 'foo' }).success(function(user) {
+            Group.create({ name: 'bar' }).success(function(group) {
+              sequelize.transaction(function(t) {
+                group.setUser(user, { transaction: t }).success(function() {
+                  Group.all().success(function(groups) {
+                    groups[0].getUser().success(function(associatedUser) {
+                      expect(associatedUser).to.be.null
+                      t.rollback().success(function() { done() })
+                    })
+                  })
+                })
+              })
+            })
+          })
+        })
+      })
+    })
+
     it('can set an association with predefined primary keys', function(done) {
       var User = this.sequelize.define('UserXYZZ', { userCoolIdTag: { type: Sequelize.INTEGER, primaryKey: true }, username: Sequelize.STRING })
         , Task = this.sequelize.define('TaskXYZZ', { taskOrSomething: { type: Sequelize.INTEGER, primaryKey: true }, title: Sequelize.STRING })
+        , self = this
 
       User.hasOne(Task, {foreignKey: 'userCoolIdTag'})
 
@@ -80,6 +151,57 @@ describe(Support.getTestDialectTeaser("HasOne"), function() {
                     })
                   })
 
+                })
+              })
+            })
+          })
+        })
+      })
+    })
+  })
+
+  describe('createAssociation', function() {
+    it('creates an associated model instance', function(done) {
+      var User = this.sequelize.define('User', { username: Sequelize.STRING })
+        , Task = this.sequelize.define('Task', { title: Sequelize.STRING })
+
+      User.hasOne(Task)
+
+      this.sequelize.sync({ force: true }).success(function() {
+        User.create({ username: 'bob' }).success(function(user) {
+          user.createTask({ title: 'task' }).success(function() {
+            user.getTask().success(function(task) {
+              expect(task).not.to.be.null
+              expect(task.title).to.equal('task')
+
+              done()
+            })
+          })
+        })
+      })
+    })
+
+    it('supports transactions', function(done) {
+      Support.prepareTransactionTest(this.sequelize, function(sequelize) {
+        var User  = sequelize.define('User', { username: Sequelize.STRING })
+          , Group = sequelize.define('Group', { name: Sequelize.STRING })
+
+        User.hasOne(Group)
+
+        sequelize.sync({ force: true }).success(function() {
+          User.create({ username: 'bob' }).success(function(user) {
+            sequelize.transaction(function(t) {
+              user.createGroup({ name: 'testgroup' }, { transaction: t }).success(function(group) {
+                User.all().success(function (users) {
+                  users[0].getGroup().success(function (group) {
+                    expect(group).to.be.null;
+                    User.all({ transaction: t }).success(function (users) {
+                      users[0].getGroup({ transaction: t }).success(function (group) {
+                        expect(group).to.be.not.null;
+                        t.rollback().success(function() { done() })
+                      })
+                    })
+                  })
                 })
               })
             })
@@ -227,6 +349,31 @@ describe(Support.getTestDialectTeaser("HasOne"), function() {
       })
     })
 
+  })
+
+  describe("Association column", function() {
+    it('has correct type for non-id primary keys with non-integer type', function(done) {
+      var User = this.sequelize.define('UserPKBT', {
+        username: {
+          type: Sequelize.STRING
+        }
+      })
+        , self = this
+
+      var Group = this.sequelize.define('GroupPKBT', {
+        name: {
+          type: Sequelize.STRING,
+          primaryKey: true
+        }
+      })
+
+      Group.hasOne(User)
+
+      self.sequelize.sync({ force: true }).success(function() {
+        expect(User.rawAttributes.GroupPKBTId.type.toString()).to.equal(Sequelize.STRING.toString())
+        done()
+      })
+    })
   })
 
   describe("Association options", function() {
