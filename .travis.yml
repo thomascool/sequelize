@@ -29,8 +29,4 @@ node_js:
 branches:
   only:
     - master
-    - 1.7.0
-
-cache:
-  directories:
-    - node_modules
+    - milestones/2.0.0
